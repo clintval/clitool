@@ -20,7 +20,7 @@ private[io] class AsyncStreamSink(in: InputStream, private val sink: String => U
   this.thread.start()
 
   /** Give the thread 500 seconds to wrap up what it's doing and then interrupt it. */
-  def close() : Unit = close(500)
+  def close(): Unit = close(500)
 
   /** Give the thread `millis` milliseconds to finish what it's doing, then interrupt it. */
   def close(millis: Long) : Unit = {
