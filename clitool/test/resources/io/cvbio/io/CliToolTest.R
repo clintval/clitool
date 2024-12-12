@@ -1,0 +1,1 @@
+stopifnot(require("stats4"))
