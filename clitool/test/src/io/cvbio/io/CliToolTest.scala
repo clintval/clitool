@@ -2,15 +2,30 @@ package io.cvbio.io
 
 import io.cvbio.io.CliTool.ToolException
 import io.cvbio.io.testing.UnitSpec
+import org.scalatest.{Ignore, Tag}
 
+import java.io.FileNotFoundException
 import java.nio.charset.StandardCharsets
-import java.nio.file.{Files, Paths}
+import java.nio.file.{Files, Path, Paths}
 import scala.annotation.nowarn
 import scala.collection.mutable.ListBuffer
-import scala.util.Try
+import scala.sys.process._
+import scala.util.{Failure, Success, Try}
 
 /** Unit tests for [[CliTool]]. */
 class CliToolTest extends UnitSpec {
+
+  /** Get the path to the named executable. */
+  private  def getExecutablePath(executable: String): Path = try {
+    val path = Paths.get(s"which $executable".!!.stripLineEnd)
+    if (!Files.isExecutable(path)) throw new FileNotFoundException(f"$executable file is not executable: $path")
+    path
+  } catch {
+    case _: RuntimeException =>
+      throw new RuntimeException(
+        s"Could not find $executable executable on the PATH. Please make sure it is installed and executable."
+      )
+  }
 
   "CliToolTest.execCommand" should "execute a command and return stdout and stderr successfully" in {
     val stdout = ListBuffer[String]()
@@ -72,200 +87,193 @@ class CliToolTest extends UnitSpec {
     logs.mkString shouldBe empty
   }
 
-  "CliTool.execIfAvailable" should "throw a ToolException when running invalid R script if Rscript is available" in {
-    val scriptResource = "io/cvbio/io/CliToolFailureTest.R"
-
-    if (Rscript.available) {
-      val stdout = ListBuffer[String]()
-      val stderr = ListBuffer[String]()
-
-      intercept[ToolException] {
-        Rscript.execScript(
-          scriptResource = scriptResource,
-          args           = Seq.empty,
-          logger         = None,
-          stdoutRedirect = stdout.append,
-          stderrRedirect = stderr.append,
-        )
-      }.getMessage should include("Command failed with exit code 1: Rscript" )
-    }
-  }
-
-  it should "emit status update on the logger if a logger is provided " in {
-    val scriptResource = "io/cvbio/io/CliToolTest.R"
-
-    if (Rscript.available) {
-      Rscript.execScript(
-        scriptResource = scriptResource,
-        args           = Seq.empty,
-        logger         = Some(logger),
-        stdoutRedirect = logger.info,
-        stderrRedirect = logger.error,
-      )
-      logs.mkString should include ("Executing script:")
-      logs.mkString should include ("Executing command:")
-      logs.mkString should include ("Loading required package: stats4")
-    }
-  }
-
-  it should "emit no logging when no logger is provided " in {
-    val scriptResource = "io/cvbio/io/CliToolTest.R"
-
-    if (Rscript.available) {
-      Rscript.execScript(
-        scriptResource = scriptResource,
-        args           = Seq.empty,
-        logger         = None,
-        stdoutRedirect = _ => (),
-        stderrRedirect = _ => (),
-      )
-      logs.mkString shouldBe empty
-    }
-  }
-
   "CliTool.ToolException" should "wrap the exit code and command in the exception message" in {
     val invalidCommand = Seq("invalidCommand")
     val code           = 2
     ToolException(code, invalidCommand).getMessage shouldBe "Command failed with exit code 2: " + invalidCommand.mkString("")
   }
 
-  "CliTool.ScriptRunner" should "execute a script from resource and emits status update to logger correctly if the " +
-    "executable is available and logger is provided" in {
-    if (Rscript.available){
-      Rscript.execScript(
-        scriptResource = "io/cvbio/io/CliToolTest.R",
-        args           = Seq.empty,
-        logger         = Some(logger),
-        stdoutRedirect = logger.info,
-        stderrRedirect = logger.info,
-      )
+  object WhenRscriptAvailable extends Tag(if (Try(getExecutablePath(Rscript.executable)).isSuccess) "" else classOf[Ignore].getName)
 
-      logs.mkString should include ("Loading required package")
-    }
-  }
+  Try(getExecutablePath(Rscript.executable)) match {
+    case Success(_) =>
+      "CliTool.Rscript.execIfAvailable" should "throw a ToolException when running invalid R script if Rscript is available" in {
+        val scriptResource = "io/cvbio/io/CliToolFailureTest.R"
 
-  it should "execute a R script from a given path if the Rscript is available" in {
-    if (Rscript.available){
-      val tempFile = Files.createTempFile("CliToolTest.", ".R")
+        val stdout = ListBuffer[String]()
+        val stderr = ListBuffer[String]()
 
-      Files.write(tempFile, "stopifnot(require(\"stats4\"))".getBytes(StandardCharsets.UTF_8))
-      tempFile.toFile.deleteOnExit()
+        intercept[ToolException] {
+          Rscript.execScript(
+            scriptResource = scriptResource,
+            args           = Seq.empty,
+            logger         = None,
+            stdoutRedirect = stdout.append,
+            stderrRedirect = stderr.append,
+          )
+        }.getMessage should include("Command failed with exit code 1: Rscript" )
+      }
 
-      noException should be thrownBy {
+      it should "emit status update on the logger if a logger is provided " in {
+        val scriptResource = "io/cvbio/io/CliToolTest.R"
+
         Rscript.execScript(
-          scriptPath     = tempFile,
+          scriptResource = scriptResource,
           args           = Seq.empty,
-          logger         = None,
-          stdoutRedirect = _ => (),
-          stderrRedirect = _ => (),
-          environment    = Map.empty,
+          logger         = Some(logger),
+          stdoutRedirect = logger.info,
+          stderrRedirect = logger.error,
         )
+        logs.mkString should include ("Executing script:")
+        logs.mkString should include ("Executing command:")
+        logs.mkString should include ("Loading required package: stats4")
       }
-    }
-  }
 
-  it should "execute a script from script resource and correctly return stdout and stderr if the executable is available" in {
-    if (Rscript.available){
-      val stdout = ListBuffer[String]()
-      val stderr = ListBuffer[String]()
+      it should "emit no logging when no logger is provided " in {
+        val scriptResource = "io/cvbio/io/CliToolTest.R"
 
-      Rscript.execScript(
-        scriptResource = "io/cvbio/io/CliToolTest.R",
-        args           = Seq.empty,
-        logger         = None,
-        stdoutRedirect = stdout.append,
-        stderrRedirect = stderr.append,
-      )
-      stdout.mkString shouldBe empty
-      stderr.mkString should include ("Loading required package")
-    }
-  }
-
-  it should "execute a script from script resource if the executable is available" in {
-    if (Python.available){
-      noException shouldBe thrownBy{
-        Python.execScript(
-          scriptResource = "io/cvbio/io/CliToolTest.py",
+        Rscript.execScript(
+          scriptResource = scriptResource,
           args           = Seq.empty,
           logger         = None,
           stdoutRedirect = _ => (),
           stderrRedirect = _ => (),
         )
+        logs.mkString shouldBe empty
       }
-    }
-  }
 
-  it should "throw ToolException and correct exit code if trying to run a script from a given path does not exist" in {
-    if (Python.available){
-      intercept[ToolException]{
-        val path = Paths.get("nowhere.py").toAbsolutePath.normalize
-        Python.execScript(
-          scriptPath     = path,
+      "CliTool.Rscript.ScriptRunner" should "execute a script from resource and emits status update to logger correctly if the " +
+        "executable is available and logger is provided" in {
+        Rscript.execScript(
+          scriptResource = "io/cvbio/io/CliToolTest.R",
           args           = Seq.empty,
-          logger         = None,
-          stdoutRedirect = _ => (),
-          stderrRedirect = _ => (),
-          environment    = Map.empty,
+          logger         = Some(logger),
+          stdoutRedirect = logger.info,
+          stderrRedirect = logger.info,
         )
-      }.getMessage should include("Command failed with exit code 2: python")
-    }
-  }
 
-  it should "throw ToolException and correct exit code when running an script with invalid command" in {
-    val stdout = ListBuffer[String]()
-    val stderr = ListBuffer[String]()
+        logs.mkString should include ("Loading required package")
+      }
 
-    if (Python.available){
-      intercept[ToolException]{
-        Python.execScript(
-          scriptResource = "io/cvbio/io/CliToolFailureTest.py",
+      it should "execute a R script from a given path if the Rscript is available" in {
+        val tempFile = Files.createTempFile("CliToolTest.", ".R")
+
+        Files.write(tempFile, "stopifnot(require(\"stats4\"))".getBytes(StandardCharsets.UTF_8))
+        tempFile.toFile.deleteOnExit()
+
+        noException should be thrownBy {
+          Rscript.execScript(
+            scriptPath     = tempFile,
+            args           = Seq.empty,
+            logger         = None,
+            stdoutRedirect = _ => (),
+            stderrRedirect = _ => (),
+            environment    = Map.empty,
+          )
+        }
+      }
+
+      it should "execute a script from script resource and correctly return stdout and stderr if the executable is available" in {
+        val stdout = ListBuffer[String]()
+        val stderr = ListBuffer[String]()
+
+        Rscript.execScript(
+          scriptResource = "io/cvbio/io/CliToolTest.R",
           args           = Seq.empty,
           logger         = None,
           stdoutRedirect = stdout.append,
           stderrRedirect = stderr.append,
         )
-      }.getMessage should include("Command failed with exit code 1: python")
+        stdout.mkString shouldBe empty
+        stderr.mkString should include ("Loading required package")
+      }
 
-      // Check stderr is written correctly
-      stdout.mkString("") shouldBe empty
-      stderr.mkString("") should include ("No module named")
-    }
+      "CliTool.Rscript.Modular" should "test that generic builtins packages are available in R if Rscript is available" in {
+        Rscript.moduleAvailable(Seq("stats")) shouldBe true
+        Rscript.moduleAvailable(Seq("stats", "stats4")) shouldBe true
+      }
+
+      it should "allow for repeated query of the same module and then let us clear the internal cache" in {
+        Rscript.moduleAvailable("stats") shouldBe true
+        Rscript.moduleAvailable("stats") shouldBe true
+        noException shouldBe thrownBy { Rscript.clearModuleAvailableCache() }
+      }
+    case Failure(_) =>
+      "CliTool.Rscript" should "be tested but `Rscript` was not found on the system PATH!" taggedAs WhenRscriptAvailable in {}
   }
 
-  "CliTool.Modular" should "test that generic builtins are available in Python if Python is available" in {
-    if (Python.available){
-      Python.moduleAvailable(Seq("sys")) shouldBe true
-      Python.moduleAvailable(Seq("sys", "os")) shouldBe true
-    }
-  }
+  object WhenPythonAvailable extends Tag(if (Try(getExecutablePath(Python.executable)).isSuccess) "" else classOf[Ignore].getName)
 
-  it should "test that generic builtins packages are available in R if Rscript is available" in {
-    if (Rscript.available){
-      Rscript.moduleAvailable(Seq("stats")) shouldBe true
-      Rscript.moduleAvailable(Seq("stats", "stats4")) shouldBe true
-    }
-  }
+  Try(getExecutablePath(Python.executable)) match {
+    case Success(_) =>
+      "CliTool.Python.ScriptRunner" should "execute a script from resource and emits status update to logger correctly if the " +
+        "executable is available and logger is provided" in {
+        noException shouldBe thrownBy{
+          Python.execScript(
+            scriptResource = "io/cvbio/io/CliToolTest.py",
+            args           = Seq.empty,
+            logger         = None,
+            stdoutRedirect = _ => (),
+            stderrRedirect = _ => (),
+          )
+        }
+      }
 
-  it should "allow for repeated query of the same module and then let us clear the internal cache" in {
-    if (Rscript.available) {
-      Rscript.moduleAvailable("stats") shouldBe true
-      Rscript.moduleAvailable("stats") shouldBe true
-      noException shouldBe thrownBy { Rscript.clearModuleAvailableCache() }
-    }
-  }
+      it should "throw ToolException and correct exit code if trying to run a script from a given path does not exist" in {
+        intercept[ToolException]{
+          val path = Paths.get("nowhere.py").toAbsolutePath.normalize
+          Python.execScript(
+            scriptPath     = path,
+            args           = Seq.empty,
+            logger         = None,
+            stdoutRedirect = _ => (),
+            stderrRedirect = _ => (),
+            environment    = Map.empty,
+          )
+        }.getMessage should include("Command failed with exit code 2: python")
+      }
 
-  "CliTool.Versioned" should "emit the current version of Python if Python is available"  in {
-    if (Python3.available){
-      Python3.version should include ("Python")
-    }
+      it should "throw ToolException and correct exit code when running an script with invalid command" in {
+        val stdout = ListBuffer[String]()
+        val stderr = ListBuffer[String]()
 
-    if (Python2.available){
-      Python2.version should include ("Python")
-    }
-  }
+        intercept[ToolException]{
+          Python.execScript(
+            scriptResource = "io/cvbio/io/CliToolFailureTest.py",
+            args           = Seq.empty,
+            logger         = None,
+            stdoutRedirect = stdout.append,
+            stderrRedirect = stderr.append,
+          )
+        }.getMessage should include("Command failed with exit code 1: python")
 
-  it should "use its version for availability arguments" in {
-    object TestPython extends Python with VersionOnStdOut { override lazy val version: String = "--version" }
-    TestPython.argsToTestAvailability should contain theSameElementsInOrderAs Seq("--version")
+        // Check stderr is written correctly
+        stdout.mkString("") shouldBe empty
+        stderr.mkString("") should include ("No module named")
+      }
+
+      "CliTool.Python.Modular" should "test that generic builtins are available in Python if Python is available" in {
+        Python.moduleAvailable(Seq("sys")) shouldBe true
+        Python.moduleAvailable(Seq("sys", "os")) shouldBe true
+      }
+
+      "CliTool.Python.Versioned" should "emit the current version of Python if Python is available"  in {
+        Python.version should include ("Python")
+
+        if (Python3.available){
+          Python3.version should include ("Python")
+        }
+
+        if (Python2.available){
+          Python2.version should include ("Python")
+        }
+      }
+
+      it should "use its version for availability arguments" in {
+        object TestPython extends Python with VersionOnStdOut { override lazy val version: String = "--version" }
+        TestPython.argsToTestAvailability should contain theSameElementsInOrderAs Seq("--version")
+      }
+    case Failure(_) =>
+      "CliTool.Python" should "be tested but `Python` was not found on the system PATH!" taggedAs WhenPythonAvailable in {}
   }
 }
